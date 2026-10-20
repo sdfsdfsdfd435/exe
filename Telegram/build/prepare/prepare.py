@@ -1668,7 +1668,8 @@ win:
     SET CONFIGURATIONS=-debug
     SET ASSERTS=
 release:
-    SET CONFIGURATIONS=-debug-and-release
+    # usa8: Release-only Qt without debug info (disk space on CI).
+    SET CONFIGURATIONS=-release
 win_asserts:
     SET ASSERTS=-force-asserts
 win:
@@ -1682,7 +1683,6 @@ win:
     configure -prefix "%LIBS_DIR%\\Qt-%QT%" ^
         %CONFIGURATIONS% ^
         %ASSERTS% ^
-        -force-debug-info ^
         -opensource ^
         -confirm-license ^
         -static ^
@@ -1719,8 +1719,6 @@ win:
         -D LCMS2_INCLUDE_DIR="%LCMS2_DIR%\\include" ^
         -D LCMS2_LIBRARIES="%LCMS2_DIR%\\out\\Release\\src\\liblcms2.a"
 
-    cmake --build . --config Debug
-    cmake --install . --config Debug
     cmake --build .
     cmake --install .
 """)

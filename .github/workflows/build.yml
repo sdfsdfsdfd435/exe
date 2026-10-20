@@ -74,6 +74,14 @@ jobs:
           [[ "$SERVER_PORT" =~ ^[0-9]+$ ]] && (( SERVER_PORT > 0 && SERVER_PORT < 65536 )) || { echo "Bad server_port: $SERVER_PORT"; exit 1; }
           echo "Server: $SERVER_IP:$SERVER_PORT"
 
+      - name: Free disk space.
+        shell: pwsh
+        run: |
+          Get-PSDrive -PSProvider FileSystem | Format-Table Name, @{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}}, @{n='UsedGB';e={[math]::Round($_.Used/1GB,1)}}
+          $dirs = @('C:\Android', 'C:\ghcup', 'C:\Program Files\MongoDB', 'C:\Program Files\MySQL', 'C:\Program Files\PostgreSQL', 'C:\Program Files\Microsoft SQL Server', 'C:\hostedtoolcache\windows\go', 'C:\hostedtoolcache\windows\Ruby', 'C:\hostedtoolcache\windows\Java_Temurin-Hotspot_jdk', 'C:\SeleniumWebDrivers', 'C:\Program Files\R')
+          foreach ($d in $dirs) { if (Test-Path $d) { cmd /c "rmdir /s /q `"$d`"" 2>$null } }
+          Get-PSDrive -PSProvider FileSystem | Format-Table Name, @{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}}
+
       - name: Prepare directories.
         run: |
           mkdir %userprofile%\TBuild\Libraries
