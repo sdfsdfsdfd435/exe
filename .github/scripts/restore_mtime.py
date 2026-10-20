@@ -21,8 +21,12 @@ count = 0
 for dirpath, dirnames, filenames in os.walk(root):
     dirnames[:] = [d for d in dirnames if d not in skip]
     for name in filenames:
+        path = os.path.join(dirpath, name)
+        # follow_symlinks=False is not supported by os.utime on Windows.
+        if os.path.islink(path):
+            continue
         try:
-            os.utime(os.path.join(dirpath, name), (OLD, OLD), follow_symlinks=False)
+            os.utime(path, (OLD, OLD))
             count += 1
         except OSError:
             pass
@@ -48,7 +52,7 @@ for line in log.splitlines():
     if stamp is None:
         continue
     full = os.path.join(root, path)
-    if os.path.isfile(full):
-        os.utime(full, (stamp, stamp), follow_symlinks=False)
+    if os.path.isfile(full) and not os.path.islink(full):
+        os.utime(full, (stamp, stamp))
         updated += 1
 print('restore_mtime: %d files set to their last commit time' % updated)
