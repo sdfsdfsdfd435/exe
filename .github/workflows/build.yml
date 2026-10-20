@@ -1,0 +1,348 @@
+name: usa8 Windows
+
+# Based on the official tdesktop .github/workflows/win.yml (v7.2.9), reduced
+# to one x64 / Qt 6 / Ninja Release build of usa8.exe.
+#
+# Caching, so that a rebuild after changing the server is minutes, not hours:
+#   * ThirdParty, Libraries and Qt (Telegram/build/prepare/prepare.py output)
+#     are restored before and saved after prepare. prepare.py skips every
+#     stage whose cache key is already there, so a first run that hits the
+#     job time limit saves its progress; just run the workflow again.
+#   * The Ninja build directory (out/) is cached too. restore_mtime.py makes
+#     the fresh checkout look older than the cached objects, so Ninja only
+#     recompiles what changed (a new server_ip / server_port only recompiles
+#     mtproto/usa8_server_config.cpp and relinks).
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'server.json'
+  workflow_dispatch:
+    inputs:
+      server_ip:
+        description: 'Default server IP baked into usa8.exe (server.json overrides it)'
+        default: '192.168.1.108'
+        required: true
+      server_port:
+        description: 'Default server port'
+        default: '42000'
+        required: true
+      publish_release:
+        description: 'Create a GitHub Release'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: usa8-windows
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 355
+
+    env:
+      ARCH: x64
+      QT_OPTION: qt6
+      PREPARE_PATH: Telegram/build/prepare/prepare.py
+      SERVER_IP: ${{ inputs.server_ip || '192.168.1.108' }}
+      SERVER_PORT: ${{ inputs.server_port || '42000' }}
+      JOB_LIMIT_MINUTES: 355
+      GH_TOKEN: ${{ github.token }}
+
+    defaults:
+      run:
+        shell: cmd
+
+    steps:
+      - name: Start timer.
+        shell: bash
+        run: echo "JOB_START=$(date +%s)" >> $GITHUB_ENV
+
+      - name: Validate server inputs.
+        shell: bash
+        run: |
+          [[ "$SERVER_IP" =~ ^[0-9A-Za-z.:-]+$ ]] || { echo "Bad server_ip: $SERVER_IP"; exit 1; }
+          [[ "$SERVER_PORT" =~ ^[0-9]+$ ]] && (( SERVER_PORT > 0 && SERVER_PORT < 65536 )) || { echo "Bad server_port: $SERVER_PORT"; exit 1; }
+          echo "Server: $SERVER_IP:$SERVER_PORT"
+
+      - name: Prepare directories.
+        run: |
+          mkdir %userprofile%\TBuild\Libraries
+          mklink /d %GITHUB_WORKSPACE%\TBuild %userprofile%\TBuild
+          echo TBUILD=%GITHUB_WORKSPACE%\TBuild>>%GITHUB_ENV%
+          echo LibrariesPath=%GITHUB_WORKSPACE%\TBuild\Libraries\win64>>%GITHUB_ENV%
+
+      - name: Get repository name.
+        shell: bash
+        run: echo "REPO_NAME=${GITHUB_REPOSITORY##*/}" >> $GITHUB_ENV
+
+      - name: Clone.
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          path: ${{ env.TBUILD }}\${{ env.REPO_NAME }}
+
+      - name: First set up.
+        shell: bash
+        run: |
+          SRC=$TBUILD/$REPO_NAME
+          DOCPATH=$SRC/docs/building-win.md
+          SDK="$(grep "SDK version" $DOCPATH | sed -r 's/.*\*\*(.*)\*\* SDK version.*/\1/')"
+          echo "SDK=$SDK" >> $GITHUB_ENV
+
+          sed -i '/CMAKE_${lang}_FLAGS_DEBUG_INIT/s/${_Zi}//' "$PROGRAMFILES"/CMake/share/cmake*/Modules/Platform/Windows-MSVC.cmake
+
+          # Libraries: same inputs as the official key, plus "release" since
+          # we build without skip-release.
+          echo "$(sha256sum $SRC/$PREPARE_PATH | awk '{ print $1 }')" >> CACHE_KEY.txt
+          echo "$SDK" >> CACHE_KEY.txt
+          echo "release-$QT_OPTION" >> CACHE_KEY.txt
+          CACHE_KEY=$(sha256sum CACHE_KEY.txt | awk '{ print $1 }' | cut -c1-16)
+          echo "CACHE_KEY=$CACHE_KEY" >> $GITHUB_ENV
+
+          # Build dir: invalidate when libraries or any submodule change.
+          SUBS=$(git -C $SRC submodule status --recursive | sha256sum | awk '{ print $1 }' | cut -c1-16)
+          echo "BUILD_KEY=$CACHE_KEY-$SUBS" >> $GITHUB_ENV
+
+          echo "Configurate git for cherry-picks."
+          git config --global user.email "you@example.com"
+          git config --global user.name "Sample"
+
+      - uses: Eden-CI/msvc-dev-cmd@master
+        name: Native Tools Command Prompt.
+        with:
+          arch: ${{ env.ARCH }}
+          sdk: ${{ env.SDK }}
+          toolset: '14.44'
+
+      - name: NuGet sources.
+        run: |
+          nuget sources Disable -Name "Microsoft Visual Studio Offline Packages"
+          nuget sources Add -Source https://api.nuget.org/v3/index.json & exit 0
+
+      # ---------------------------------------------------------------- libs
+
+      - name: Restore ThirdParty cache.
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.TBUILD }}\ThirdParty
+          key: usa8-third-party-${{ env.CACHE_KEY }}-none
+          restore-keys: usa8-third-party-${{ env.CACHE_KEY }}-
+
+      - name: Restore Libraries cache.
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\*
+            !${{ env.LibrariesPath }}\cache_keys
+            !${{ env.LibrariesPath }}\[qQ]t[_-]*
+            ${{ env.LibrariesPath }}\cache_keys\*
+            !${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          key: usa8-libs-${{ env.CACHE_KEY }}-none
+          restore-keys: usa8-libs-${{ env.CACHE_KEY }}-
+
+      - name: Restore Qt cache.
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\[qQ]t[_-]*
+            ${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          key: usa8-qt-${{ env.CACHE_KEY }}-none
+          restore-keys: usa8-qt-${{ env.CACHE_KEY }}-
+
+      - name: Libraries state before.
+        id: before
+        shell: bash
+        run: |
+          state() { (ls -la "$LibrariesPath/cache_keys" "$TBUILD/ThirdParty/cache_keys" 2>/dev/null; cat "$LibrariesPath"/cache_keys/* "$TBUILD"/ThirdParty/cache_keys/* 2>/dev/null) | sha256sum | awk '{ print $1 }'; }
+          echo "state=$(state)" >> $GITHUB_OUTPUT
+          ELAPSED=$(( ($(date +%s) - JOB_START) / 60 ))
+          # Leave ~40 minutes to trim and save the caches.
+          echo "PREPARE_TIMEOUT=$(( JOB_LIMIT_MINUTES - ELAPSED - 40 ))" >> $GITHUB_ENV
+
+      - name: Libraries.
+        id: prepare
+        continue-on-error: true
+        timeout-minutes: ${{ fromJSON(env.PREPARE_TIMEOUT) }}
+        run: |
+          %TBUILD%\%REPO_NAME%\Telegram\build\prepare\win.bat silent %QT_OPTION%
+
+      - name: Libraries state after.
+        id: after
+        if: always()
+        shell: bash
+        run: |
+          state() { (ls -la "$LibrariesPath/cache_keys" "$TBUILD/ThirdParty/cache_keys" 2>/dev/null; cat "$LibrariesPath"/cache_keys/* "$TBUILD"/ThirdParty/cache_keys/* 2>/dev/null) | sha256sum | awk '{ print $1 }'; }
+          NOW=$(state)
+          echo "changed=$([ "$NOW" != "${{ steps.before.outputs.state }}" ] && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "prepare outcome: ${{ steps.prepare.outcome }}"
+
+      - name: Free up some disk space.
+        if: always()
+        shell: bash
+        run: find $LibrariesPath '(' '(' ! '(' -name '*.lib' -o -name '*.a' -o -name '*.exe' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -path '*/nv-codec-headers/*' ')' -type f ')' -o -empty ')' -delete
+
+      - name: Save ThirdParty cache.
+        if: always() && steps.after.outputs.changed == 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.TBUILD }}\ThirdParty
+          key: usa8-third-party-${{ env.CACHE_KEY }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Save Libraries cache.
+        if: always() && steps.after.outputs.changed == 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\*
+            !${{ env.LibrariesPath }}\cache_keys
+            !${{ env.LibrariesPath }}\[qQ]t[_-]*
+            ${{ env.LibrariesPath }}\cache_keys\*
+            !${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          key: usa8-libs-${{ env.CACHE_KEY }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Save Qt cache.
+        if: always() && steps.after.outputs.changed == 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\[qQ]t[_-]*
+            ${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          key: usa8-qt-${{ env.CACHE_KEY }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Drop superseded library caches.
+        if: always() && steps.after.outputs.changed == 'true'
+        shell: bash
+        continue-on-error: true
+        run: |
+          NEW="${{ github.run_id }}-${{ github.run_attempt }}"
+          for name in third-party libs qt; do
+            gh cache list -R "$GITHUB_REPOSITORY" --key "usa8-$name-" --limit 100 --json id,key --jq '.[] | "\(.id) \(.key)"' |
+            while read id key; do
+              [[ "$key" == *"-$NEW" ]] || gh cache delete -R "$GITHUB_REPOSITORY" "$id" || true
+            done
+          done
+
+      - name: Stop if libraries are not complete yet.
+        if: steps.prepare.outcome != 'success'
+        shell: bash
+        run: |
+          echo "::error::prepare.py did not finish in this run (time limit or failure). Progress is cached - re-run the workflow to continue."
+          exit 1
+
+      # --------------------------------------------------------------- build
+
+      - name: Restore build directory cache.
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.TBUILD }}\${{ env.REPO_NAME }}\out
+          key: usa8-build-${{ env.BUILD_KEY }}-none
+          restore-keys: usa8-build-${{ env.BUILD_KEY }}-
+
+      - name: Make sources older than cached objects.
+        shell: bash
+        run: |
+          python "$TBUILD/$REPO_NAME/.github/scripts/restore_mtime.py" "$TBUILD/$REPO_NAME" out
+          ELAPSED=$(( ($(date +%s) - JOB_START) / 60 ))
+          # Leave ~20 minutes to save the build directory.
+          echo "BUILD_TIMEOUT=$(( JOB_LIMIT_MINUTES - ELAPSED - 20 ))" >> $GITHUB_ENV
+
+      - name: API credentials.
+        shell: bash
+        env:
+          API_ID: ${{ secrets.TDESKTOP_API_ID }}
+          API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
+        run: |
+          if [ -n "$API_ID" ] && [ -n "$API_HASH" ]; then
+            echo "TDESKTOP_BUILD_API=-D TDESKTOP_API_ID=$API_ID -D TDESKTOP_API_HASH=$API_HASH" >> $GITHUB_ENV
+          else
+            echo "::warning::TDESKTOP_API_ID / TDESKTOP_API_HASH secrets are not set, using test credentials."
+            echo "TDESKTOP_BUILD_API=-D TDESKTOP_API_TEST=ON" >> $GITHUB_ENV
+          fi
+
+      - name: usa8 build.
+        id: build
+        timeout-minutes: ${{ fromJSON(env.BUILD_TIMEOUT) }}
+        run: |
+          cd %TBUILD%\%REPO_NAME%\Telegram
+
+          call configure.bat ^
+          -G "Ninja Multi-Config" ^
+          %QT_OPTION% ^
+          %TDESKTOP_BUILD_API% ^
+          -D CMAKE_CONFIGURATION_TYPES=Release ^
+          -D CMAKE_MSVC_DEBUG_INFORMATION_FORMAT= ^
+          -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON ^
+          -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON ^
+          -D USA8_SERVER_IP=%SERVER_IP% ^
+          -D USA8_SERVER_PORT=%SERVER_PORT%
+          if errorlevel 1 exit /b 1
+
+          cmake --build ..\out --config Release --target Telegram --parallel
+
+      - name: Save build directory cache.
+        if: always() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure' || steps.build.outcome == 'cancelled')
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.TBUILD }}\${{ env.REPO_NAME }}\out
+          key: usa8-build-${{ env.BUILD_KEY }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Drop superseded build caches.
+        if: always() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure' || steps.build.outcome == 'cancelled')
+        shell: bash
+        continue-on-error: true
+        run: |
+          NEW="${{ github.run_id }}-${{ github.run_attempt }}"
+          gh cache list -R "$GITHUB_REPOSITORY" --key "usa8-build-" --limit 100 --json id,key --jq '.[] | "\(.id) \(.key)"' |
+          while read id key; do
+            [[ "$key" == *"-$NEW" ]] || gh cache delete -R "$GITHUB_REPOSITORY" "$id" || true
+          done
+
+      # ------------------------------------------------------------- publish
+
+      - name: Package.
+        shell: bash
+        run: |
+          OUT="$TBUILD/$REPO_NAME/out/Release"
+          mkdir -p artifact/usa8
+          cp "$OUT/usa8.exe" artifact/usa8/
+          printf '{\n  "ip": "%s",\n  "port": %s\n}\n' "$SERVER_IP" "$SERVER_PORT" > artifact/usa8/server.json
+          cp "$TBUILD/$REPO_NAME/.github/usa8/README.txt" artifact/usa8/README.txt
+          (cd artifact && 7z a -tzip -mx=9 ../usa8-win64.zip usa8 > /dev/null)
+          ls -la artifact/usa8 usa8-win64.zip
+
+      - uses: actions/upload-artifact@v7
+        name: Upload artifact.
+        with:
+          name: usa8-win64
+          path: artifact\
+          retention-days: 30
+
+      - name: GitHub Release.
+        if: github.event_name == 'push' || inputs.publish_release
+        shell: bash
+        run: |
+          TAG="usa8-v7.2.9-${GITHUB_RUN_NUMBER}"
+          gh release create "$TAG" usa8-win64.zip artifact/usa8/usa8.exe \
+            -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "usa8 Desktop 7.2.9 (layer 229) #${GITHUB_RUN_NUMBER}" \
+            --notes "Telegram Desktop v7.2.9 (API layer 229) for the usa8 MTProto server. Default server: ${SERVER_IP}:${SERVER_PORT} (edit server.json next to usa8.exe to change it). Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+      - name: Timing.
+        if: always()
+        shell: bash
+        run: |
+          echo "### usa8 build" >> $GITHUB_STEP_SUMMARY
+          echo "- server: \`$SERVER_IP:$SERVER_PORT\`" >> $GITHUB_STEP_SUMMARY
+          echo "- libraries: ${{ steps.prepare.outcome }}, build: ${{ steps.build.outcome }}" >> $GITHUB_STEP_SUMMARY
+          echo "- job time: $(( ($(date +%s) - JOB_START) / 60 )) min" >> $GITHUB_STEP_SUMMARY
