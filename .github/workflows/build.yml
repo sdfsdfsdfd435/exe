@@ -164,7 +164,7 @@ jobs:
         id: before
         shell: bash
         run: |
-          state() { (ls -la "$LibrariesPath/cache_keys" "$TBUILD/ThirdParty/cache_keys" 2>/dev/null; cat "$LibrariesPath"/cache_keys/* "$TBUILD"/ThirdParty/cache_keys/* 2>/dev/null) | sha256sum | awk '{ print $1 }'; }
+          state() { (ls -la "$LibrariesPath/cache_keys" "$TBUILD/ThirdParty/cache_keys" 2>/dev/null; cat "$LibrariesPath"/cache_keys/* "$TBUILD"/ThirdParty/cache_keys/* 2>/dev/null || true) | sha256sum | awk '{ print $1 }'; }
           echo "state=$(state)" >> $GITHUB_OUTPUT
           ELAPSED=$(( ($(date +%s) - JOB_START) / 60 ))
           # Leave ~40 minutes to trim and save the caches.
@@ -182,7 +182,7 @@ jobs:
         if: always()
         shell: bash
         run: |
-          state() { (ls -la "$LibrariesPath/cache_keys" "$TBUILD/ThirdParty/cache_keys" 2>/dev/null; cat "$LibrariesPath"/cache_keys/* "$TBUILD"/ThirdParty/cache_keys/* 2>/dev/null) | sha256sum | awk '{ print $1 }'; }
+          state() { (ls -la "$LibrariesPath/cache_keys" "$TBUILD/ThirdParty/cache_keys" 2>/dev/null; cat "$LibrariesPath"/cache_keys/* "$TBUILD"/ThirdParty/cache_keys/* 2>/dev/null || true) | sha256sum | awk '{ print $1 }'; }
           NOW=$(state)
           echo "changed=$([ "$NOW" != "${{ steps.before.outputs.state }}" ] && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "prepare outcome: ${{ steps.prepare.outcome }}"
