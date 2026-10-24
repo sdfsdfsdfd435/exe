@@ -21,7 +21,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #endif // Q_OS_WIN
 
 #ifndef USA8_SERVER_IP
-#define USA8_SERVER_IP "192.168.1.108"
+#define USA8_SERVER_IP "141.98.7.179"
 #endif // USA8_SERVER_IP
 
 #ifndef USA8_SERVER_PORT

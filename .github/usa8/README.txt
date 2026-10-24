@@ -10,7 +10,7 @@ Server address
 usa8.exe reads server.json from its own folder at start-up:
 
   {
-    "ip": "192.168.1.108",
+    "ip": "141.98.7.179",
     "port": 42000
   }
 

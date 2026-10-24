@@ -24,7 +24,7 @@ on:
     inputs:
       server_ip:
         description: 'Default server IP baked into usa8.exe (server.json overrides it)'
-        default: '192.168.1.108'
+        default: '141.98.7.179'
         required: true
       server_port:
         description: 'Default server port'
@@ -53,7 +53,7 @@ jobs:
       ARCH: x64
       QT_OPTION: qt6
       PREPARE_PATH: Telegram/build/prepare/prepare.py
-      SERVER_IP: ${{ inputs.server_ip || '192.168.1.108' }}
+      SERVER_IP: ${{ inputs.server_ip || '141.98.7.179' }}
       SERVER_PORT: ${{ inputs.server_port || '42000' }}
       JOB_LIMIT_MINUTES: 355
       GH_TOKEN: ${{ github.token }}

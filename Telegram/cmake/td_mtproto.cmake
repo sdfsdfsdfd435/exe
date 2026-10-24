@@ -57,7 +57,7 @@ PRIVATE
 # usa8: default server baked into the binary, overridden at runtime by
 # server.json next to the executable. Only this one source file depends
 # on these values, so changing them recompiles a single object.
-set(USA8_SERVER_IP "192.168.1.108" CACHE STRING "usa8 default MTProto server IP.")
+set(USA8_SERVER_IP "141.98.7.179" CACHE STRING "usa8 default MTProto server IP.")
 set(USA8_SERVER_PORT "42000" CACHE STRING "usa8 default MTProto server port.")
 set_source_files_properties(${src_loc}/mtproto/usa8_server_config.cpp
 PROPERTIES

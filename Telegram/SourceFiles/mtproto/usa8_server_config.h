@@ -15,7 +15,7 @@ namespace MTP::Usa8 {
 //
 // Read once from "server.json" next to the executable:
 //   {
-//     "ip": "192.168.1.108",
+//     "ip": "141.98.7.179",
 //     "port": 42000,
 //     "public_key_file": "pubkey.asc",  // optional, relative to the exe
 //     "public_key": "-----BEGIN RSA PUBLIC KEY-----\n..." // optional
